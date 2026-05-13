@@ -1,0 +1,3 @@
+Manifest-Version: 1.0
+Created-By: Java Piano Application
+Main-Class: com.piano.PianoApp
