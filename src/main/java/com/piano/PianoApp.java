@@ -13,10 +13,13 @@ public class PianoApp {
             JFrame frame = new JFrame("Piano Keyboard");
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             frame.setResizable(false);
-            frame.add(new PianoKeyboard());
+            PianoKeyboard keyboard = new PianoKeyboard();
+            frame.add(keyboard);
             frame.pack();
             frame.setLocationRelativeTo(null);
             frame.setVisible(true);
+            // Request focus so the keyboard panel receives key events immediately
+            keyboard.requestFocusInWindow();
         });
     }
 }

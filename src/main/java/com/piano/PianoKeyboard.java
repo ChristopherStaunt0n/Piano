@@ -5,7 +5,9 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -18,12 +20,17 @@ public class PianoKeyboard extends JPanel implements KeyListener {
     private static final int KEY_HEIGHT = 200;
     private static final int BLACK_KEY_WIDTH = 25;
     private static final int BLACK_KEY_HEIGHT = 130;
+    private static final int HISTORY_PANEL_HEIGHT = 50;
+    private static final int KEYBOARD_PANEL_HEIGHT = 220;
     private static final int PANEL_WIDTH = 880;
-    private static final int PANEL_HEIGHT = 220;
+    private static final int PANEL_HEIGHT = HISTORY_PANEL_HEIGHT + KEYBOARD_PANEL_HEIGHT;
+    private static final long INPUT_HISTORY_DURATION_MS = 60_000;
     
     private SoundGenerator soundGenerator;
     private Map<Integer, Integer> keyToNote;
     private Map<Integer, Boolean> pressedKeys;
+    private List<RegisteredInput> inputHistory;
+    private Timer historyTimer;
     
     // Keyboard layout mapping (QWERTY piano layout)
     private static final int[] KEY_CODES = {
@@ -52,12 +59,27 @@ public class PianoKeyboard extends JPanel implements KeyListener {
         soundGenerator = new SoundGenerator();
         keyToNote = new HashMap<>();
         pressedKeys = new HashMap<>();
+        inputHistory = new ArrayList<>();
         
         // Map keyboard keys to MIDI notes
         for (int i = 0; i < KEY_CODES.length; i++) {
             keyToNote.put(KEY_CODES[i], MIDI_NOTES[i]);
             pressedKeys.put(KEY_CODES[i], false);
         }
+
+        historyTimer = new Timer(1000, e -> {
+            if (pruneHistory()) {
+                repaint();
+            }
+        });
+        historyTimer.start();
+    }
+
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        // Ensure the panel gains focus when added to the window so key events work
+        requestFocusInWindow();
     }
     
     @Override
@@ -66,14 +88,46 @@ public class PianoKeyboard extends JPanel implements KeyListener {
         Graphics2D g2d = (Graphics2D) g;
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         
+        // Draw input history area at top
+        int historyAreaY = 0;
+        // Draw darker background to make the history panel visually distinct
+        g2d.setColor(new Color(200, 200, 200));
+        g2d.fillRect(0, historyAreaY, PANEL_WIDTH, HISTORY_PANEL_HEIGHT);
+        // Draw dark border at bottom to separate from keyboard
+        g2d.setColor(new Color(100, 100, 100));
+        g2d.setStroke(new BasicStroke(2));
+        g2d.drawLine(0, HISTORY_PANEL_HEIGHT, PANEL_WIDTH, HISTORY_PANEL_HEIGHT);
+        
+        g2d.setFont(new Font("Arial", Font.BOLD, 12));
+        FontMetrics fm = g2d.getFontMetrics();
+        g2d.setColor(Color.BLACK);
+        g2d.drawString("Recent Inputs (last 60s):", 20, historyAreaY + 20);
+        
+        int x = PANEL_WIDTH - 20;
+        long now = System.currentTimeMillis();
+        for (int i = inputHistory.size() - 1; i >= 0; i--) {
+            RegisteredInput entry = inputHistory.get(i);
+            String label = entry.label + " ";
+            int width = fm.stringWidth(label);
+            x -= width;
+            if (x < 220) {
+                break;
+            }
+            float ageRatio = Math.min(1f, (float) (now - entry.timestamp) / INPUT_HISTORY_DURATION_MS);
+            int brightness = 60 + (int) (120 * ageRatio);
+            g2d.setColor(new Color(brightness, brightness, brightness));
+            g2d.drawString(entry.label, x, historyAreaY + 20);
+        }
+        
         // Draw white keys
+        int keyboardAreaY = HISTORY_PANEL_HEIGHT;
         int xOffset = 20;
         int whiteKeyIndex = 0;
         
         for (int i = 0; i < KEY_CODES.length; i++) {
             if (!IS_BLACK_KEY[i]) {
-                int x = xOffset + (whiteKeyIndex * KEY_WIDTH);
-                drawWhiteKey(g2d, x, 10, KEY_CODES[i]);
+                int keyX = xOffset + (whiteKeyIndex * KEY_WIDTH);
+                drawWhiteKey(g2d, keyX, keyboardAreaY + 10, KEY_CODES[i]);
                 whiteKeyIndex++;
             }
         }
@@ -82,21 +136,20 @@ public class PianoKeyboard extends JPanel implements KeyListener {
         whiteKeyIndex = 0;
         for (int i = 0; i < KEY_CODES.length; i++) {
             if (IS_BLACK_KEY[i]) {
-                // Calculate position relative to white keys
                 int precedingWhites = 0;
                 for (int j = 0; j < i; j++) {
                     if (!IS_BLACK_KEY[j]) precedingWhites++;
                 }
                 
-                int x = xOffset + (precedingWhites * KEY_WIDTH) + KEY_WIDTH - BLACK_KEY_WIDTH / 2;
-                drawBlackKey(g2d, x, 10, KEY_CODES[i]);
+                int keyX = xOffset + (precedingWhites * KEY_WIDTH) + KEY_WIDTH - BLACK_KEY_WIDTH / 2;
+                drawBlackKey(g2d, keyX, keyboardAreaY + 10, KEY_CODES[i]);
             }
         }
         
-        // Draw help text
+        // Draw help text below keyboard
         g2d.setColor(Color.DARK_GRAY);
         g2d.setFont(new Font("Arial", Font.PLAIN, 11));
-        g2d.drawString("White Keys: A W S E D F T G H U J K O L P ; '", 20, PANEL_HEIGHT - 5);
+        g2d.drawString("White Keys: A W S E D F T G H U J K O L P ; '", 20, keyboardAreaY + KEYBOARD_PANEL_HEIGHT - 5);
     }
     
     private void drawWhiteKey(Graphics2D g, int x, int y, int keyCode) {
@@ -109,7 +162,6 @@ public class PianoKeyboard extends JPanel implements KeyListener {
         g.setStroke(new BasicStroke(2));
         g.drawRect(x, y, KEY_WIDTH - 1, KEY_HEIGHT - 1);
         
-        // Draw key label
         g.setFont(new Font("Arial", Font.BOLD, 10));
         String label = KeyEvent.getKeyText(keyCode);
         FontMetrics fm = g.getFontMetrics();
@@ -128,7 +180,6 @@ public class PianoKeyboard extends JPanel implements KeyListener {
         g.setStroke(new BasicStroke(2));
         g.drawRect(x, y, BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT);
         
-        // Draw key label
         g.setColor(Color.WHITE);
         g.setFont(new Font("Arial", Font.BOLD, 8));
         String label = KeyEvent.getKeyText(keyCode);
@@ -145,6 +196,7 @@ public class PianoKeyboard extends JPanel implements KeyListener {
             if (!pressedKeys.get(e.getKeyCode())) {
                 pressedKeys.put(e.getKeyCode(), true);
                 soundGenerator.playNote(note);
+                addInputToHistory(e.getKeyCode());
                 repaint();
             }
         }
@@ -162,5 +214,25 @@ public class PianoKeyboard extends JPanel implements KeyListener {
     @Override
     public void keyTyped(KeyEvent e) {
         // Not used
+    }
+    
+    private void addInputToHistory(int keyCode) {
+        inputHistory.add(new RegisteredInput(KeyEvent.getKeyText(keyCode), System.currentTimeMillis()));
+        pruneHistory();
+    }
+    
+    private boolean pruneHistory() {
+        long cutoff = System.currentTimeMillis() - INPUT_HISTORY_DURATION_MS;
+        return inputHistory.removeIf(entry -> entry.timestamp < cutoff);
+    }
+    
+    private static class RegisteredInput {
+        private final String label;
+        private final long timestamp;
+
+        RegisteredInput(String label, long timestamp) {
+            this.label = label;
+            this.timestamp = timestamp;
+        }
     }
 }
